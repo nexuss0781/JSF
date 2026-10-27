@@ -1,0 +1,40 @@
+{
+  "name": "jsf-cli",
+  "version": "0.0.1",
+  "description": "JSF - System-level shared JavaScript dependency manager. Install once. Share everywhere.",
+  "bin": {
+    "jsf": "./bin/jsf.js"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "node bin/jsf.js",
+    "link:global": "npm link"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^12.1.0",
+    "env-paths": "^3.0.0",
+    "fs-extra": "^11.2.0",
+    "hasha": "^6.0.0",
+    "ora": "^8.1.0",
+    "p-map": "^7.0.2",
+    "pacote": "^21.5.2",
+    "prompts": "^2.4.2",
+    "semver": "^7.6.3",
+    "tar": "^7.4.3"
+  },
+  "engines": {
+    "node": "^20.17.0 || >=22.9.0"
+  },
+  "keywords": [
+    "jsf",
+    "dependency",
+    "manager",
+    "shared",
+    "system-level",
+    "cache",
+    "node_modules"
+  ],
+  "author": "",
+  "license": "MIT"
+}
