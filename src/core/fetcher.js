@@ -1,68 +1,76 @@
 import pacote from 'pacote';
 import fs from 'fs-extra';
-import path from 'path';
+import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { randomUUID } from 'node:crypto';
 import * as tar from 'tar';
-import { getConfig } from './config.js';
-import { getStorePath, packageExistsInStore } from './store.js';
 import pMap from 'p-map';
+import { getConfig } from './config.js';
+import { assertCachedIntegrities, getStorePathFromConfig, makePackageFilesReadOnly, packageExistsInStore } from './store.js';
 
-export async function fetchAndExtractPackage(pkgName, version) {
-  const config = await getConfig();
-  
-  // Check if already exists
-  if (await packageExistsInStore(pkgName, version)) {
-    return { cached: true, path: await getStorePath(pkgName, version) };
+export async function fetchAndExtractPackage(pkgName, version, lockInfo = {}, configOverride = null) {
+  const config = configOverride || await getConfig();
+  const storePath = getStorePathFromConfig(config, pkgName, version);
+  if (await packageExistsInStore(pkgName, version, config)) {
+    await assertCachedIntegrities([{ name: pkgName, version, integrity: lockInfo.integrity }], config);
+    return { cached: true, path: storePath };
   }
-  
-  const storePath = await getStorePath(pkgName, version);
-  const tempPath = path.join(path.dirname(storePath), `.staging-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
-  
+  const parentPath = path.dirname(storePath);
+  const tempPath = path.join(parentPath, `.staging-${process.pid}-${randomUUID()}`);
   try {
     await fs.ensureDir(tempPath);
-    
-    // Fetch and extract the package tarball using pacote's stream handler API
-    const manifest = await pacote.manifest(`${pkgName}@${version}`, { registry: config.registry });
-    await pacote.tarball.stream(`${pkgName}@${version}`, (tarball) =>
-      pipeline(tarball, tar.extract({
-        cwd: tempPath,
-        strip: 1 // npm packages have a 'package/' prefix
-      })),
-    { registry: config.registry });
-    
-    // Ensure package.json exists
-    const pkgJsonPath = path.join(tempPath, 'package.json');
-    if (!(await fs.pathExists(pkgJsonPath))) {
+    const options = { registry: config.registry };
+    if (lockInfo.integrity) options.integrity = lockInfo.integrity;
+    if (lockInfo.resolved) options.resolved = lockInfo.resolved;
+    const manifest = await pacote.manifest(`${pkgName}@${version}`, options);
+    if (manifest.version !== version) {
+      throw new Error(`Registry returned ${pkgName}@${manifest.version} when ${version} was requested.`);
+    }
+    await pacote.tarball.stream(`${pkgName}@${version}`, tarball =>
+      pipeline(tarball, tar.extract({ cwd: tempPath, strip: 1 })), options);
+    const packageJsonPath = path.join(tempPath, 'package.json');
+    if (!(await fs.pathExists(packageJsonPath))) {
       throw new Error(`Invalid package: ${pkgName}@${version} - no package.json found`);
     }
-    
-    // Move atomically to store
-    await fs.ensureDir(path.dirname(storePath));
-    await fs.move(tempPath, storePath, { overwrite: false });
-    
+    const extractedManifest = await fs.readJson(packageJsonPath);
+    if (extractedManifest.name !== pkgName || extractedManifest.version !== version) {
+      throw new Error(`Package contents do not match ${pkgName}@${version}.`);
+    }
+    await fs.writeJson(path.join(tempPath, '.jsf-package.json'), {
+      name: pkgName,
+      version,
+      integrity: lockInfo.integrity || manifest.dist?.integrity || null,
+      resolved: lockInfo.resolved || manifest.dist?.tarball || null,
+      verifiedAt: new Date().toISOString()
+    });
+    await makePackageFilesReadOnly(tempPath);
+    await fs.ensureDir(parentPath);
+    try {
+      await fs.move(tempPath, storePath, { overwrite: false });
+    } catch (moveError) {
+      if (await packageExistsInStore(pkgName, version, config)) {
+        await fs.remove(tempPath);
+        await assertCachedIntegrities([{ name: pkgName, version, integrity: lockInfo.integrity }], config);
+        return { cached: true, path: storePath, manifest };
+      }
+      throw moveError;
+    }
     return { cached: false, path: storePath, manifest };
   } catch (error) {
-    // Cleanup on error
-    if (await fs.pathExists(tempPath)) {
-      await fs.remove(tempPath);
-    }
+    if (await fs.pathExists(tempPath)) await fs.remove(tempPath);
     throw error;
   }
 }
 
 export async function fetchPackagesInParallel(packages) {
   const config = await getConfig();
-  const results = await pMap(
-    packages,
-    async ({ name, version }) => {
-      try {
-        const result = await fetchAndExtractPackage(name, version);
-        return { name, version, success: true, ...result };
-      } catch (error) {
-        return { name, version, success: false, error: error.message };
-      }
-    },
-    { concurrency: config.maxConcurrency || 8 }
-  );
-  return results;
+  const concurrency = Math.max(1, Number(config.maxConcurrency) || 8);
+  return pMap(packages, async item => {
+    try {
+      const result = await fetchAndExtractPackage(item.name, item.version, item, config);
+      return { name: item.name, version: item.version, success: true, ...result };
+    } catch (error) {
+      return { name: item.name, version: item.version, success: false, error: error.message };
+    }
+  }, { concurrency });
 }

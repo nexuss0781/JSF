@@ -1,67 +1,58 @@
 import fs from 'fs-extra';
-import path from 'path';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { getConfig } from './config.js';
 import { getProjectId } from './utils.js';
-import { createHash } from 'crypto';
 
-export async function trackProject(projectPath, deps) {
+export async function trackProject(projectPath, deps, resolvedDeps = {}, resolvedPackages = []) {
   const config = await getConfig();
   const projectsPath = config.projectsPath;
   await fs.ensureDir(projectsPath);
-  
-  const projectId = getProjectId(projectPath);
   const absolutePath = path.resolve(projectPath);
+  const projectId = getProjectId(absolutePath);
   const packageJsonPath = path.join(absolutePath, 'package.json');
-  
-  let packageJsonHash = '';
-  if (await fs.pathExists(packageJsonPath)) {
-    const pkgContent = await fs.readFile(packageJsonPath);
-    packageJsonHash = createHash('sha256').update(pkgContent).digest('hex');
-  }
-  
+  const packageJsonHash = await fs.pathExists(packageJsonPath)
+    ? createHash('sha256').update(await fs.readFile(packageJsonPath)).digest('hex')
+    : '';
+  const lockPath = path.join(absolutePath, 'jsf.lock');
+  const jsfLockHash = await fs.pathExists(lockPath)
+    ? createHash('sha256').update(await fs.readFile(lockPath)).digest('hex')
+    : '';
   const projectData = {
     id: projectId,
     name: path.basename(absolutePath),
     path: absolutePath,
     packageJsonHash,
     deps: deps || {},
+    resolvedDeps: resolvedDeps || {},
+    resolvedPackages: resolvedPackages || [],
+    packageCount: (resolvedPackages || []).length,
     lastInstall: new Date().toISOString(),
-    jsfLockHash: ''
+    jsfLockHash
   };
-  
-  const projectFile = path.join(projectsPath, `${projectId}.json`);
-  await fs.writeJson(projectFile, projectData, { spaces: 2 });
-  
+  await fs.writeJson(path.join(projectsPath, `${projectId}.json`), projectData, { spaces: 2 });
   return projectData;
 }
 
 export async function getTrackedProjects() {
   const config = await getConfig();
   const projectsPath = config.projectsPath;
-  
-  if (!(await fs.pathExists(projectsPath))) {
-    return [];
-  }
-  
+  if (!(await fs.pathExists(projectsPath))) return [];
   const files = await fs.readdir(projectsPath);
   const projects = [];
-  
   for (const file of files) {
-    if (file.endsWith('.json')) {
-      try {
-        const projectData = await fs.readJson(path.join(projectsPath, file));
-        projects.push(projectData);
-      } catch (e) {
-        // Skip invalid project files
-      }
+    if (!file.endsWith('.json')) continue;
+    try {
+      projects.push(await fs.readJson(path.join(projectsPath, file)));
+    } catch {
+      // Ignore incomplete or invalid records and keep listing the remaining projects.
     }
   }
-  
   return projects.sort((a, b) => new Date(b.lastInstall) - new Date(a.lastInstall));
 }
 
 export async function getProjectByPath(projectPath) {
   const projects = await getTrackedProjects();
   const absolutePath = path.resolve(projectPath);
-  return projects.find(p => p.path === absolutePath);
+  return projects.find(project => project.path === absolutePath);
 }

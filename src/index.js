@@ -5,19 +5,34 @@ import { projects } from './commands/projects.js';
 import { status } from './commands/status.js';
 import { run } from './commands/run.js';
 import { verify } from './commands/verify.js';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
 
 const program = new Command();
-
 program
   .name('jsf')
-  .description('JSF - Install once. Share everywhere. System-level shared JavaScript dependency manager')
-  .version('0.0.1');
+  .description('JSF - shared npm package storage with project-specific dependency trees')
+  .version(version);
 
-program.command('setup').description('Initialize JSF at system level (creates ~/.jsf/, sets up config)').action(setup);
-program.command('install').description('Install deps from package.json using global store').action(install);
-program.command('status').description('Show diff vs global store (New / Upgrade / Downgrade / Up-to-date)').action(status);
-program.command('projects').description('List all tracked projects with their versions').action(projects);
-program.command('run <script>').description('Run a package.json script via JSF').action(run);
-program.command('verify').description('Verify linked node_modules and check for broken symlinks').action(verify);
+program.command('setup')
+  .description('Initialize the machine-wide store and per-user settings')
+  .action(setup);
+program.command('install')
+  .description('Resolve, share, and link packages from package.json')
+  .action(install);
+program.command('status')
+  .description('Show exact resolved versions and NEW / UPGRADE / DOWNGRADE changes')
+  .action(status);
+program.command('projects')
+  .description('List tracked projects and their resolved package versions')
+  .action(projects);
+program.command('run <script>')
+  .description('Run a package.json script via npm')
+  .action(run);
+program.command('verify')
+  .description('Verify project links point to the shared store')
+  .action(verify);
 
 program.parse();

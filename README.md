@@ -1,161 +1,74 @@
-# JSF (JavaScript Shared Framework)
+# JSF CLI
 
-**Install once. Share everywhere.**
+**Share npm package files across projects. Keep each project’s dependency tree correct.**
 
-JSF is a system-level shared JavaScript dependency manager that eliminates redundant downloads. All packages are stored in a single global location (`~/.jsf/store/`) and symlinked to projects as needed. 
+JSF resolves `package.json` dependencies through npm’s lockfile resolver, stores each exact package version in a machine-wide cache, and builds a lock-specific hard-linked install tree. A project’s direct `node_modules` entries link into that tree, so transitive and peer dependencies resolve in the same layout npm selected. Reusing a cached package version avoids downloading its tarball again.
 
-## The Problem
+Canonical package files are marked read-only to prevent accidental changes through a project link. Anyone authorized to write to the shared store must still be trusted; do not grant access to untrusted users.
 
-- Node.js projects are getting bigger with dependencies
-- Installing dependencies downloads 2GB+ of packages repeatedly
-- Every new project requires downloading the same packages again
-- Wastes bandwidth and time
+## Requirements and supported inputs
 
-## The Solution
+- Node.js `^20.17.0` or `>=22.9.0`, plus npm.
+- npm registry dependencies with semver ranges, tags, and npm aliases are supported. Existing `package-lock.json` or `npm-shrinkwrap.json` is used as a resolution input.
+- `file:`, `workspace:`, Git, and direct URL dependencies are not supported yet; JSF reports these instead of partially installing them.
+- JSF does not execute package lifecycle scripts. Packages that require `preinstall`, `install`, or `postinstall` work may need a different installer or a future JSF build step.
 
-JSF solves this by:
-- **System-level storage**: All packages installed once to `~/.jsf/store/`
-- **Smart diffing**: Only download what's missing when installing in new projects
-- **Instant reuse**: Projects share the same package files via symlinks
-- **Familiar workflow**: Still uses `package.json` just like npm/yarn/pnpm
+## Install
 
-## Installation
-
-```bash
-# Navigate to JSF directory
-cd JSF
-
-# Install dependencies
-npm install
-
-# Link globally
-npm link
+```sh
+npm install --global jsf-cli
+jsf --version
 ```
 
-## Usage
+Initialize the shared store once per machine. The default store is `/var/lib/jsf/store` on Linux, `/Library/Application Support/JSF/store` on macOS, or `%ProgramData%\\JSF\\store` on Windows. An administrator may need to run setup from an elevated shell:
 
-### 1. Setup JSF (First Time)
-```bash
-jsf setup
+```sh
+sudo jsf setup
 ```
-This creates the `~/.jsf/` directory structure and configures your registry.
 
-### 2. Install Dependencies in a Project
-```bash
-# In your project directory with package.json
-jsf install
-```
-JSF will:
-1. Read your `package.json`
-2. Check what's in the global store
-3. Only download missing packages
-4. Symlink all dependencies to `node_modules/`
-5. Track your project
+On Windows, use an elevated PowerShell prompt. The shared store should be readable by intended users. For multi-user writes, configure access through a trusted group or platform ACL; do **not** make the store world-writable. User registry settings and project tracking remain in that user’s `~/.jsf/` directory.
 
-### 3. Check Status Before Installing
-```bash
+When upgrading from an older JSF setup, `jsf setup` migrates cached package versions from the prior per-user store. Run `jsf install` in each existing project afterward so its links target the machine-wide store.
+
+You can override paths with `JSF_HOME` (per-user settings), `JSF_SHARED_HOME` (machine-wide JSF root), or `JSF_SHARED_STORE` (package store). All users who should share packages must point at the same shared store and have appropriate permissions.
+
+## Use in a project
+
+```sh
+cd /path/to/project
 jsf status
-```
-Shows what's NEW, UPGRADE, DOWNGRADE, or UP-TO-DATE.
-
-### 4. List All Tracked Projects
-```bash
-jsf projects
-```
-Shows all projects using JSF with their dependencies and versions.
-
-### 5. Run Scripts
-```bash
-jsf run dev
-jsf run start
-jsf run build
-```
-
-### 6. Verify Links
-```bash
+jsf install
 jsf verify
-```
-Checks for broken symlinks in `node_modules/`.
-
-## How It Works
-
-```
-~/.jsf/
-├── config.json        # System configuration
-├── store/             # Global package store (all packages live here)
-│   ├── express/
-│   │   └── 4.21.2/
-│   └── lodash/
-│       └── 4.17.21/
-├── projects/          # Per-project metadata
-├── registry-cache/    # Download cache
-└── logs/              # Install logs
+jsf projects
+jsf run test
 ```
 
-When you run `jsf install`:
-1. **Scan** - Check global store for existing packages
-2. **Diff** - Determine what needs to be downloaded
-3. **Fetch** - Download only missing packages in parallel
-4. **Extract** - Unpack to global store atomically
-5. **Link** - Create symlinks from project `node_modules/` to store
-6. **Track** - Save project metadata
+`jsf install` resolves exact package versions, fetches only uncached package versions in parallel (default concurrency 8), creates/reuses a shared install tree, links the project, writes `jsf.lock`, and records resolved versions. `jsf status` runs npm’s lockfile resolver and compares the target graph with the project’s previous lock and the shared cache; it can contact the registry if the project lock is incomplete or the manifest changed.
 
-When you install the same packages in another project, they are **reused instantly** with no downloads!
-
-## Test It
-
-```bash
-# Setup
-jsf setup
-
-# Create first project
-mkdir test-app && cd test-app
-echo '{"name":"test-app","dependencies":{"express":"^4.21.2","lodash":"^4.17.21"}}' > package.json
-
-# First install - downloads everything
-jsf install
-
-# Create second project with same deps
-mkdir ../test-app-2 && cd ../test-app-2
-echo '{"name":"test-app-2","dependencies":{"express":"^4.21.2","lodash":"^4.17.21"}}' > package.json
-
-# Second install - should reuse from cache!
-jsf install
-# Expected: "Reused 2 from cache. Downloaded 0."
-```
+Keep `package.json` and preferably `package-lock.json` in version control. `jsf.lock` records the exact resolved tree and shared-store links for JSF verification; it is machine-path-specific and should not replace the portable npm lockfile.
 
 ## Commands
 
 | Command | Description |
 | --- | --- |
-| `jsf setup` | Initialize JSF at system level |
-| `jsf install` | Install deps from package.json using global store |
-| `jsf status` | Show diff vs global store |
-| `jsf projects` | List all tracked projects |
-| `jsf run <script>` | Run a package.json script via JSF |
-| `jsf verify` | Verify linked node_modules |
+| `jsf setup` | Initialize the shared store and per-user settings |
+| `jsf install` | Resolve, fetch, and link the dependency tree |
+| `jsf status` | Show exact versions and NEW / UPGRADE / DOWNGRADE changes |
+| `jsf projects` | List tracked projects with resolved direct and transitive versions |
+| `jsf run <script>` | Run a `package.json` script through npm |
+| `jsf verify` | Check for missing, broken, or out-of-store project links |
 
-## Windows Notes
+## Development and release checks
 
-On Windows, creating symlinks may require:
-- **Developer Mode** enabled (Settings > Update & Security > For developers), or
-- **Administrator privileges** for your terminal
+```sh
+npm ci
+npm test
+npm run test:e2e
+npm pack --dry-run
+```
 
-If you encounter symlink errors, run `jsf setup` again or check permissions.
-
-## Tech Stack
-
-- [commander](https://github.com/tj/commander.js) - CLI parsing
-- [pacote](https://github.com/npm/pacote) - npm registry fetching
-- [tar](https://github.com/isaacs/node-tar) - Tarball extraction
-- [p-map](https://github.com/sindresorhus/p-map) - Parallel processing
-- [fs-extra](https://github.com/jprichardson/node-fs-extra) - File system utilities
-- [semver](https://github.com/npm/node-semver) - Version handling
+The end-to-end test uses the npm registry and should be run on the supported operating systems before release. Publishing is intentionally not part of these local checks.
 
 ## License
 
-MIT
-
----
-
-**JSF - Install once. Share everywhere.**
+MIT. See [LICENSE](LICENSE).
