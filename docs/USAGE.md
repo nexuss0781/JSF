@@ -10,7 +10,7 @@
 ## Install and setup
 
 ```sh
-npm install --global jsf-cli
+npm install --global jsmf-cli
 jsf --version
 sudo jsf setup                # Linux/macOS; elevated PowerShell on Windows
 ```

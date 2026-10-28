@@ -16,7 +16,7 @@ Canonical package files are marked read-only to prevent accidental changes throu
 ## Install
 
 ```sh
-npm install --global jsf-cli
+npm install --global jsmf-cli
 jsf --version
 ```
 

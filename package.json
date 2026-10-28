@@ -1,5 +1,5 @@
 {
-  "name": "jsf-cli",
+  "name": "jsmf-cli",
   "version": "0.1.0",
   "description": "A CLI for sharing npm package files across projects with lockfile-correct dependency trees.",
   "bin": {
